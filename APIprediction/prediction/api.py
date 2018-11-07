@@ -4,6 +4,9 @@ Created on Fri Nov  2 11:09:37 2018
 
 @author: Antoine Pham
 
+_Buiding a predictor from a Machine Learning model
+_Turning all into an API
+
 Reference : "https://www.datacamp.com/community/tutorials/machine-learning-models-api-python"
 """
 
@@ -82,7 +85,7 @@ if __name__ == '__main__':
         port = 23456 # If no port provided the port will be set to 23456
 
     
-    import pred2prod as pred
+    import pred2prod as pred # load the Machine Learning model
     print ('Model loaded!')
     
 
