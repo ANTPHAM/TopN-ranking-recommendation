@@ -323,8 +323,8 @@ class Recommendation():
             ranking_by_id=ranking_by_id.loc[ranking_by_id['ID'].isin(it),:]
             
         '''
-		    Output by Top N Items and/ or User age
-		'''
+	Output by Top N Items and/ or User age
+	'''
         if self.top is None:
     	# get recommended Items as the global ranking
             if self.user_age is None:
@@ -458,10 +458,7 @@ class Recommendation():
         self.predtype = predtype
         '''
         Products' price based recommendation optimization
-
-		Output 
-
-		'''
+	'''
         r=self.get_prediction().reset_index()
         r=r[['ProductName','score','ID']]
         Ranking_final=pd.merge(Products,r,on=('ProductName','ID'),how='left').sort_values('score',ascending=False) 
