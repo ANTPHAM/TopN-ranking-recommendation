@@ -2,9 +2,9 @@
 """
 Title: "Recommender System by Top_N Ranking_ Model in API "
 
-_ This model has been buit by developing a pre-trained model on a reference customer.
+- Putting into an API this model that  has been buit by developing a pre-trained model( the one trained on the reference customer's data).
 
-_ The parameters of the new model has been founded through NLP  and Word embedding applications on product descriptions.
+- The parameters of the new model has been founded through NLP  and Word embedding applications on product descriptions.
 
 Authors : Antoine.P
 
