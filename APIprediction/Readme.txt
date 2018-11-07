@@ -1,5 +1,5 @@
 
-# This project aims to put a  Machine Learning model into  an API allowing to test inputs and verify outputs.The ML model is based on Top N ranking algorithm to buid a Recommender System. In order to work on a new customer, the cross products understanding and parameter transfert has been done with NLP tasks and Word Embedding aproach.
+# This project aims to put a Machine Learning model into  API (Posman) allowing to test inputs and verify outputs.
 
 Requirement: Python 3.6 64bit Flask 1.0.2 Posman 6.4.4
 
