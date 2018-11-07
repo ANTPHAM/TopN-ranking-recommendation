@@ -45,9 +45,9 @@ def predict():
                     f.add_Event(str(query.loc[i,'Event']))
                     event_vector = f.Event2vec()
                 else:
-                    query1 = query.loc[query['UserID']==query.loc[i,'UserID'],:]
+                    query1 = query[:i+1]
+                    query1 = query1.loc[query1['UserID']==query.loc[i,'UserID'],:]
                     query1=query1.reset_index()
-                    print(query1)
                     for j in range(len(query1)):
                         f.add_Event(str(query1.loc[j,'Event']))
                     event_vector = f.Event2vec()
