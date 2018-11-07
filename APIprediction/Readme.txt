@@ -15,7 +15,7 @@ _Code organization:
 						+ Load the Machine Learning model containing the model parameters saved under ".csv" file  into memory when the application starts
 						+ Create an API  that takes input variables, transforms them into the appropriate format, and returns predictions.
 
-		- "pred2prod.py"  : the Machine Learning model
+		- "pred2prod.py"  : Recommender engine for a new customer, developed from a pre_trained model on a reference customer
 						
 
 		- "math_utils.py": functions and anything else to implement the algorithm
