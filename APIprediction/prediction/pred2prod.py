@@ -2,6 +2,10 @@
 """
 Title: "Recommender System by Top_N Ranking_ Model in API "
 
+_ This model has been buit by developing a pre-trained model on a reference customer.
+
+_ The parameters of the new model has been founded through NLP  and Word embedding applications on product descriptions.
+
 Authors : Antoine.P
 
 Date: September 2018
