@@ -1,0 +1,1125 @@
+---
+title: 'Data Preparation_ data sources: SQL_Server/ Context Aware RS for Restaurants
+  Project'
+author: "Antoine.P _ from July to Octobre 2017"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+#### 1)  BUILDING A USER DATA SET 
+
+#### 2) EXTRACTING RELEVANT EVENT INFORMATIONS
+ 
+#### 3)  RESHAPING DATA AND GETTING LABELS FOR ALGORITHMS
+
+#### 4)  FREQUENT ITEM SET_ APRIORI ALGORITHM
+
+
+##### 1)  BUILDING A USER DATA SET 
+
+First, we will build a Data set aiming to link 2 tables: OrderDetail & OrderHeader. The table Product wil be also used to get product information: name, price....
+
+Building this Data set has double objectives: the first is to create inputs , what we 're going to do in this script, which will be fit to ML algorithms. The second is to get labels for those ML algorithms, these labels are simply ordered products we can extract from the Data set.
+
+The following SQL code is to execute when extracting the 1st Data set from our Microsoft SQL Server as follow: 
+
+
+select D.OrderHeaderID, H.ID, D.ID, D.PersonID, D.ProductID, P.Name,D.ProductGroupID,D.IsSuggestion, P.Available, P.GrossPrice, P.NetPrice,'D.NegociatedNetPrice','D.Quantity',P.WorkingOrder as PWorkingOrder, 
+D.WorkingOrder as DWorkingOrder, H.DeviceID as HDeviceID, H.EmployeeID, H.NbDiners,H.CreationDatetime, H.LastEditionDatetime,D.WorkspaceLocation, H.ShopID, D.OrderHeader_ShopID
+from dbo.OrderDetail D
+left join dbo.OrderHeader H
+on H.ID= D.OrderHeaderID
+left join dbo.Product P
+on D.ProductID = P.ID
+where H.ShopID=4 and H.LastEditionDatetime<'2017-08-31'
+order by  D.OrderHeaderID , PersonID  
+
+
+Importing required libraries
+```{r}
+library(dplyr)
+library(reshape2)
+library(lubridate)
+library(arules)
+library(arulesViz)
+library(RColorBrewer)
+```
+
+Importing the raw data set 
+```{r}
+df= read.csv("C:/Users/Pham Antoine/Desktop/extractSQL2.csv", sep=";", header = TRUE, stringsAsFactors = F)
+names(df)<- c('D.OrderHeaderID','H.ID', 'D.ID', 'D.PersonID', 'D.ProductID', 'P.Name','ProductGroupID','IsSuggestion', 'P.Available', 'P.GrossPrice', 'P.NetPrice', 'D.NegociatedNetPrice','D.Quantity','P.WorkingOrder', 'D.WorkingOrder', 'H.DeviceID', 'H.EmployeeID', 'H.NbDiners','H.CreationDatetime', 'H.LastEditionDatetime','D.WorkspaceLocation', 'H.ShopID', 'D.OrderHeader_ShopID')
+colnames(df)
+```
+
+```{r}
+str(df)
+```
+
+Creating 2 functions to convertir variables between factor and numeric class
+```{r}
+to.numerics<- function ( df,variables){
+  for (variable in variables){
+    df[[variable]]<- as.numeric(df[[variable]])
+    
+  }
+  return(df)
+}
+```
+
+```{r}
+to.factors<- function ( df,variables){
+  for (variable in variables){
+    df[[variable]]<- as.factor(df[[variable]])
+  }    
+  return(df)
+}
+
+```
+
+Applying these function to convert variables to required type
+```{r}
+factor_vars<-c('D.PersonID','P.Name','ProductGroupID','IsSuggestion','H.DeviceID','H.EmployeeID','H.CreationDatetime','H.LastEditionDatetime','D.WorkspaceLocation')
+df<-to.factors(df,factor_vars)
+```
+
+```{r}
+df$D.NegociatedNetPrice<-as.numeric(df$D.NegociatedNetPrice,na.rm=TRUE)# change the typ of this variable before assigning 0 to records having null value
+```
+
+Checking NA values
+```{r}
+sapply(df, function(x) sum ( is.na(x)))
+```
+
+if Na value replace  by 0
+```{r}
+df[is.na(df)]<-0
+```
+
+```{r}
+str(df)
+```
+
+
+```{r}
+head(df,2)
+```
+
+What are restaurants (Shp_ID) included in the data set?
+```{r}
+unique(df$D.OrderHeader_ShopID)
+```
+Excluding records related to the Shop_ID 6
+```{r}
+#library(dplyr)
+df1=filter(df,D.OrderHeader_ShopID==4)
+```
+
+```{r}
+unique(df1$H.ShopID)
+```
+
+Removing records where PersonID == NULL.
+
+Note that if PersonID=NULL , the record has no ID in the table 'OrderDetail', so not easy to link to the table Event
+```{r}
+df1=subset(df1, D.PersonID !='NULL')
+```
+
+```{r}
+print(dim(df))
+print(dim(df1))
+```
+
+```{r}
+print(colnames(df1))
+```
+
+Checking the whole information concerning a given customer
+```{r}
+filter(df1,D.PersonID==136)
+```
+
+We will be calculating for each customer the total of times the customer has visited the restaurant and his average ticket as well
+
+
+```{r}
+# Attention: Using the package ' funModelling' may cause issue to the  function 'summarise' of 'dpyr' package
+tab1=df1 %>% 
+  group_by(D.PersonID) %>% 
+    summarise(nb_visits=length(unique(H.ID)),
+              avg_ticketU=sum(D.NegociatedNetPrice*D.Quantity)/length(unique(H.ID)))
+```
+
+```{r}
+# cheking with the customer ID=539
+filter(tab1,D.PersonID==539)
+```
+
+Make the list of price for each product
+```{r}
+It_netprice<-df1%>%group_by(P.Name)%>%summarise(NetPrice=unique(P.NetPrice))
+```
+
+```{r}
+head(It_netprice,5)
+```
+
+
+```{r}
+tab2=subset(df1,select=c('D.OrderHeaderID','D.PersonID','P.Name','H.NbDiners','D.Quantity'))
+```
+
+Using the 'dcast'  function (equivalent in Python: https://stackoverflow.com/questions/36970264/pandas-equivalent-for-r-dcast)
+```{r}
+#library(reshape2)
+It_nbdinner<-dcast(tab2, H.NbDiners~P.Name, value.var = 'D.Quantity',fun.aggregate = sum)
+```
+
+```{r}
+It_nbdinner
+```
+
+```{r}
+subset(df1,H.NbDiners==8, select=c('H.NbDiners','P.Name','D.Quantity'))
+```
+
+```{r}
+df1%>%group_by(H.NbDiners)%>%summarise('count_nb'=length(unique(D.OrderHeaderID)))
+#we will use this information to apply weighting adjustement computation when implementating algo
+```
+
+```{r}
+It_nbdiner<-merge(x=df1%>%group_by(H.NbDiners)%>%summarise('count_nb'=length(unique(D.OrderHeaderID))),y = It_nbdinner,by = 'H.NbDiners', all.y=T)
+```
+
+```{r}
+It_nbdiner
+```
+
+```{r}
+subset(df1,H.NbDiners=='2'& P.Name=='ABATILLES PLATES')
+```
+
+Getting all returning customers (nb_visits>1)
+
+```{r}
+re_cust<-filter(tab1, nb_visits !='1') # to find out returning customers 
+unique(re_cust$nb_visits)
+re_cust
+```
+
+```{r}
+table(re_cust$nb_visits)
+```
+
+
+
+And all new customers
+
+```{r}
+newcust<-filter(tab1, nb_visits=='1') # subsetting new customers
+newcust
+```
+
+checking with the customer ID N°-1
+```{r}
+filter(df1,D.PersonID==-1)
+```
+```{r}
+print(dim(tab1))
+print(dim(newcust))
+print(dim(re_cust))
+print(dim(It_nbdiner))
+```
+
+- Customer ID N°136 has visited 10 times
+- There are 323 returning customers Vs. 9169 new customers
+Taking a look at the distribution of number of customers by the number of times of visits 
+
+```{r}
+table(tab1$nb_visits)
+
+```{r}
+filter(tab1,nb_visits=='167')
+```
+
+Now, plotting a bar chart to display the number of clients for each number of visite 
+
+```{r}
+barplot(table(re_cust$nb_visits), 
+        main= '',las=1,col = re_cust$nb_visits,cex.axis=0.8,cex.names=1)
+```
+
+Who is the customer having visited the restaurant 13 times?
+
+```{r}
+subset(re_cust,nb_visits=='13', select = c(D.PersonID))
+```
+
+It's the Customer with Person ID =539 and his profile as follow:
+```{r}
+subset(df1,D.PersonID==539)
+```
+Looking again at the tail of data set
+```{r}
+tail(df1)
+```
+
+Creating a column containing this  binary value: O if the customer is new , 1 otherwise
+
+```{r}
+df1$user_visit<-ifelse(df1$D.PersonID %in% newcust$D.PersonID,0,1)
+table(df1$user_visit)# to check the distribution of this new variableb
+```
+
+We're going to do a check
+```{r}
+table(merge(x=df1,y=tab1,by='D.PersonID',x.all=TRUE)$nb_visits) # We will create a data set by this function later
+```
+
+It looks correct since we have obtained the same result by 2 computing methods
+
+Checking more
+```{r}
+filter(df1,D.PersonID==136)
+```
+
+In order to compute the sold quantity of an item for each value of number of visits of customer, we are going to create a column in the data set df1 that shows the number of visits of each customer
+```{r}
+print(colnames(re_cust))
+print(dim(re_cust))
+#df1$nb_visits<-ifelse(df1$D.PersonID %in% re_cust$D.PersonID,re_cust$nb_visits,1)# To check if it is not wrong
+```
+
+We reuse the function dcast for computing the number of occurence of  each item by each number of visits of customer
+
+Make a data set containing the list of sold Items and merging it with nb_visits variable in the 'x' data set ( see also the above check with  function 'merge')
+```{r}
+tab3=subset(merge(x=df1,y=tab1,by='D.PersonID',x.all=TRUE), select=c('D.OrderHeaderID','D.PersonID','P.Name','nb_visits','D.Quantity'))
+
+```
+
+```{r}
+print(dim(df1))
+print(dim(tab3))
+print(table(tab3$nb_visits))
+```
+Apply the function dcast to make a data set containing for each value of the visit frequency the count of each sold item
+
+```{r}
+IT_return_cust<-dcast(tab3,nb_visits~P.Name, value.var = 'D.Quantity',fun.aggregate = sum)
+```
+
+```{r}
+IT_return_cust # we have to add a column to show the number of customers related to each value of nb_visits
+```
+
+Calculate again the number of customers for each value of nb_visits
+```{r}
+table(tab1$nb_visits)
+```
+
+```{r}
+as.data.frame(table(tab1$nb_visits))
+```
+
+Adding this feature to IT_return_cust
+
+```{r}
+IT_return_cust<-merge( y =as.data.frame(table(tab1$nb_visits)),x=IT_return_cust, by.x ='nb_visits', by.y='Var1', all.x = TRUE )
+```
+
+```{r}
+IT_return_cust
+
+```
+
+```{r}
+IT_return_cust<-IT_return_cust[c(1,127,2:126)]
+```
+
+```{r}
+names(IT_return_cust)[2]<-c('count_nb')
+```
+
+```{r}
+IT_return_cust# export this data set 
+```
+
+Making a check with values represented by df1 data set. It looks correct!!
+
+```{r}
+df1%>%group_by(P.Name)%>%summarise('sold.quanti'=sum(D.Quantity))
+```
+
+```{r}
+filter(tab3,nb_visits==13)
+```
+
+```{r}
+filter(df1,D.PersonID==539)
+```
+
+```{r}
+unique(df1$D.WorkspaceLocation)
+table(df$D.WorkspaceLocation)
+```
+
+```{r}
+table((df1%>%group_by(D.OrderHeaderID,D.PersonID)%>%summarise(tab2=unique(D.WorkspaceLocation)))$tab2) #b=unique(D.WorkspaceLocation))
+```
+
+As we can see at this variable 'D.WorkspaceLocation', many rows which have a nulle value
+
+So far, we've obtained a data frame (tab1) describing the number of visits and the average tiket of an given customer.
+
+Looking again at this data frame
+```{r}
+nb_visit<-tab1
+head(nb_visit)
+```
+
+```{r}
+colnames(df1)
+```
+
+```{r}
+df1%>%group_by(P.Name)%>%summarise(P.NetPrice=unique(P.NetPrice),ProductGroupID=mode(ProductGroupID))
+```
+
+What we 're going to do now is to create a new data Set by using 'group_by' function to create only one row for each pairH.ID+PersonID.
+We will be selecting by 'summarise' function informations which seem relevant for futur analysis
+
+```{r}
+
+tab4=df1%>%group_by(D.OrderHeaderID,H.ID,D.PersonID)%>%summarise(DeviceID=unique(H.DeviceID),
+                                                              H.CreationDatetime=unique(H.CreationDatetime),
+                                                              H.H.LastEditionDatetime=unique(H.LastEditionDatetime),
+                                                              D.WorkspaceLocation=unique(D.WorkspaceLocation),
+                                                              user_visit=unique(user_visit),
+                                                              H.NbDiners = unique(H.NbDiners))
+                                                             # 0 if the customer comme the 1st time , 1 otherwise
+tail(tab4)
+```
+
+Merging 2 data frames (tab1/nb_visit & tab4),we will be applying a left join function to conserve all rows in (tab4). This join will be  based on PersonID column, so for returning customers, values which are represented by (tab1) can be duplicated
+
+```{r}
+tab4<- merge(x=tab4,y=nb_visit,by='D.PersonID',all.x = TRUE )# if the 1st visit , nb_visit= 1 ans so on...
+tab4<-arrange(tab4,desc(H.ID))
+head(tab4,2)
+```
+
+```{r}
+filter(tab4,D.PersonID==219)
+```
+
+```{r}
+dim(tab4)
+```
+
+Working with date&time data
+```{r}
+#library(lubridate)
+tab4$Date<-date(tab4$H.CreationDatetime)
+tail(tab4,3)
+```
+
+Calculating purchasing frequency for each customer
+```{r}
+tab5<-tab4%>%group_by(D.PersonID)%>%summarise(as.numeric(max(Date)-min(Date))/as.numeric(unique(nb_visits)))# (max date _min date)/nb_visite
+names(tab5)<-c('D.PersonID','pch_freq')
+head(tab5,2)
+filter(tab5,D.PersonID==136)
+
+```
+
+Merging this variable describing time dimension to our data set
+```{r}
+tab4<-merge(x=tab4,y=tab5,by='D.PersonID',all.x =T)
+filter(tab4)
+arrange(tab4,desc(H.CreationDatetime))
+```
+
+Checking the dimension of the data set
+```{r}
+dim(tab4)
+```
+Distribution of variable ' WorkspaceLocation'
+```{r}
+table(tab4$D.WorkspaceLocation)
+```
+
+```{r}
+filter(tab4,D.PersonID==219)
+```
+
+```{r}
+dim(tab4)
+```
+
+```{r}
+#write.csv(tab4,file="seen_data.csv",row.names = FALSE)
+```
+
+
+Take a look at these orders
+```{r}
+
+filter(tab4,D.OrderHeaderID==3560| D.OrderHeaderID==3561|D.OrderHeaderID==3562|D.OrderHeaderID==3563|D.OrderHeaderID==3566|D.OrderHeaderID==3567|D.OrderHeaderID==3557|
+         D.OrderHeaderID==3558|D.OrderHeaderID==4475)
+```
+
+Check again our data sets
+```{r}
+print(table(re_cust$nb_visits))
+print(table(tab4$user_visit))
+print(table(newcust$nb_visits))
+print(table(tab1$nb_visits))
+```
+
+```{r}
+length(unique(tab4$DeviceID))
+```
+
+
+##### 2) EXTRACTING RELEVANT EVENT INFORMATIONS
+ 
+The goal of this task  is to get data describing actions realized by the User for each Order.
+
+In order to make a link between Event, Order and User, we have utilized 3 tables.
+
+The SQL code to get this data set is as following:
+ 
+select  distinct(TimeStamp), E.ID,E.UserID,D.PersonID as PersonID, E.DeviceID, D.OrderHeaderID as OrderHeaderID, E.TimeStamp, H.DeviceID, H.ID, H.CreationDatetime,H.LastEditionDatetime,E.Parameter
+from Event E
+left join dbo.OrderDetail D
+on E.UserID=D.PersonID
+left join dbo.OrderHeader H
+on H.DeviceID=E.DeviceID and D.OrderHeaderID=H.ID
+where H.DeviceID is not null and H.ID is not null and cast(E.Timestamp as date)=cast(H.CreationDatetime as date) # our assumption was when theses 2 dates are the same, we can link the Event to the OrderHeaderID
+order by E.TimeStamp , E.UserID
+ 
+```{r}
+event_df<- read.csv("C:/Users/Pham Antoine/Desktop/extractSQL_event_ID1.csv",sep=';',header = TRUE)
+```
+
+```{r}
+head(event_df,3)
+```
+
+```{r}
+tail(event_df,3)
+```
+
+```{r}
+dim(event_df)# before importing the data set having Type (318475  7)
+```
+
+Check out the output above a given customer
+```{r}
+filter(event_df,PersonID==23)
+```
+
+```{r}
+filter(tab4,D.PersonID==23)
+```
+
+```{r}
+filter(df1,D.PersonID==23)
+```
+
+Check out  the output
+```{r}
+str(event_df)
+```
+
+Converting numeric variables  to factor variables
+```{r}
+to_facvars<-c('UserID','PersonID','DeviceID','OrderHeaderID','DeviceID.1','ID.1')
+event_df<-to.factors(event_df,to_facvars)
+```
+
+Checking Na values
+```{r}
+sapply(event_df,function(x) sum ( is.na(x)))
+```
+
+```{r}
+colnames(event_df)
+```
+
+Dropping duplicated columns
+
+```{r}
+event_df<- subset(event_df,select=names(event_df)%in%c('PersonID','DeviceID','OrderHeaderID','TimeStamp','CreationDatetime','LastEditionDatetime','Parameter','Type'))
+colnames(event_df)
+```
+
+Renaming columns for having the same names as ones in the 1st data set
+```{r}
+names(event_df)<-c('D.PersonID', 'H.DeviceID','D.OrderHeaderID','E.TimeStamp','H.CreationDatetime','H.LastEditionDatetime','E.Parameter','Type')# Type is a new variable so we don't need #changing  variable names
+```
+
+```{r}
+tail(event_df,2)
+```
+
+Doing some checks 
+```{r}
+filter(event_df,D.OrderHeaderID==4489)
+```
+
+Taking a look at records where TimeStamp >LastEditionDatetime
+```{r}
+#library(lubridate)
+filter(event_df, hour(E.TimeStamp) > hour(H.LastEditionDatetime))
+```
+
+Now, computing for each pair : Order/User, the duration  between Max&Min of variable 'TimeStamp'
+```{r}
+tab6=event_df%>%group_by(D.OrderHeaderID,D.PersonID,H.DeviceID)%>%summarise(H.CreationDatetime=unique(H.CreationDatetime),
+                                                                       H.LastEditionDatetime= unique(H.LastEditionDatetime),
+                                                                      visit_duration=difftime(max(as.POSIXct(E.TimeStamp)),min(as.POSIXct(E.TimeStamp)),units='min')
+                                                                      #maxETimestamp=max(as.POSIXlt(E.TimeStamp)),
+                                                                      #minETimestamp=min(as.POSIXlt(E.TimeStamp))
+                                                                      )
+```
+
+```{r}
+tail(tab6,2)
+```
+
+```{r}
+dim(tab6)
+```
+!!!!6733 rows : it's good since we haved obtained the same number of rows when applying function pivot_table in Python to group by Order/Person ID all actions ( Parameter): e.g, order1 person2 youtube=3,xmax=2.....
+
+
+Checking with the PersonID 10407 
+```{r}
+filter(tab6,D.PersonID ==10407)
+```
+ATTENTION : make sure visit_duration is mesured by minutes instead of hour!!!!!!!!!!!
+
+```{r}
+id10407=filter(event_df,D.PersonID==10407)
+```
+
+As we can see below, the Time difference of ID10407 is 1.06 hours and not minutes, that's why we have used :difftime(max(as.POSIXct(E.TimeStamp)),min(as.POSIXct(E.TimeStamp)),units='min')
+```{r}
+max(as.POSIXlt(id10407$E.TimeStamp))-min(as.POSIXlt(id10407$E.TimeStamp))
+```
+
+```{r}
+max(as.POSIXct(id10407$E.TimeStamp))-min(as.POSIXct(id10407$E.TimeStamp))
+```
+
+```{r}
+difftime(max(as.POSIXct(id10407$E.TimeStamp)),min(as.POSIXct(id10407$E.TimeStamp)),units='min')
+```
+
+
+Getting the event duration for this User 
+
+```{r}
+id10406=filter(event_df,D.PersonID==10406)
+id10406
+```
+
+```{r}
+filter(event_df,D.PersonID==10407)
+```
+
+```{r}
+max(as.POSIXlt(id10406$E.TimeStamp))-min(as.POSIXlt(id10406$E.TimeStamp))
+```
+checking it with the new data frame
+```{r}
+max(as.POSIXlt(filter(event_df,D.PersonID==23&D.OrderHeaderID==3559)$E.TimeStamp))-min(as.POSIXlt(filter(event_df,D.PersonID==23&D.OrderHeaderID==3559)$E.TimeStamp))
+```
+
+```{r}
+subset(tab6,D.PersonID==23&D.OrderHeaderID==3559,select = c('visit_duration'))
+```
+
+Thatlooks good!!!!
+
+Take a look at a particular case
+```{r}
+filter(event_df,D.PersonID==539&D.OrderHeaderID==2037)
+```
+
+```{r}
+filter(tab6,D.PersonID==539)
+```
+
+
+```{r}
+filter(tab4,D.PersonID==539)
+```
+
+There are more D.OrderHeaderID in the set (tab4)   than in  the set (tab6) since no information recorded in the table Event for somme OrderHeaderID ( for example, if Device N°> 100 = no Event recorded or Date < 21/12 => no Event recorded)
+
+We can also add the 'visit_duration' from tab6 to tab4; a NA's value will be given  to rows in tab4  having no value in tab6
+```{r}
+User=merge(x=tab4, y=tab6, by= c('D.PersonID', 'D.OrderHeaderID'), all.x = T)
+dim(User)
+```
+
+Check out 'User' data set
+```{r}
+library(funModeling)
+df_status(User)
+```
+
+```{r}
+filter(df1,D.PersonID==539)
+```
+
+```{r}
+subset(User,D.PersonID==539,select=c("D.OrderHeaderID","D.PersonID" ,"user_visit","nb_visits", "H.NbDiners","visit_duration" ))
+```
+
+```{r}
+subset(event_df,D.PersonID==23&D.OrderHeaderID==3559,select=c('D.PersonID','D.OrderHeaderID' ,'E.TimeStamp','E.Parameter','Type'))
+```
+
+```{r}
+filter(User,D.PersonID==23)
+```
+
+Look at returning customers
+```{r}
+filter(User, nb_visits!=1)
+```
+
+```{r}
+filter(User,D.PersonID==38331)
+```
+
+```{r}
+colnames(User)
+```
+
+Drop duplicate columns
+```{r}
+User<-subset(User, select = names(User)%in%c("D.PersonID","D.OrderHeaderID","H.ID","DeviceID","H.CreationDatetime.x","H.H.LastEditionDatetime","D.WorkspaceLocation",
+                                     "user_visit","H.NbDiners","nb_visits","avg_ticketU","Date","pch_freq","visit_duration"))
+names(User)<-c("D.PersonID","D.OrderHeaderID","H.ID","DeviceID","H.CreationDatetime","H.LastEditionDatetime","D.WorkspaceLocation",
+                                     "user_visit","H.NbDiners","nb_visits","avg_ticketU","Date","pch_freq","visit_duration")
+colnames(User)
+```
+
+```{r}
+filter(User,D.PersonID==23)
+filter(User,D.PersonID==-1)
+```
+
+```{r}
+
+filter(tab6,D.PersonID==23)
+```
+
+How many event does a given customer have?
+```{r}
+tab6%>%group_by(D.PersonID)%>%summarise(length(unique(visit_duration)))
+```
+
+How many are there mising values on each variable?
+
+```{r}
+sapply(User, function(x) sum ( is.na(x)))
+```
+
+
+```{r}
+filter(tab4,D.OrderHeaderID==1)
+```
+
+#### 3) RESHAPING DATA AND GETTING LABELS FOR ALGORITHMS
+
+For training our predictive models, we need to feed labels (outcomes) corresponding to each record to models
+
+These labels are simply items bought by each customer ( PersonID) at each transaction (OredrHeaderID)
+```{r}
+unique(df1$D.WorkingOrder)
+table(as.factor(df1$D.WorkingOrder))
+```
+
+Subseting columns allowing to prepare an outcomes ( labels) matrix
+```{r}
+tab7<-subset(df1,select = c('H.ID','D.PersonID','P.Name','D.Quantity','P.NetPrice','D.NegociatedNetPrice'))
+tail(tab7,5)
+```
+
+Using 'reshape2' package to get an outcome matrix
+```{r}
+dim(tab7)
+```
+
+The function 'dcast ' will be utilized to group records by OrderHeaderID & PersonID. It will also create columns each of which representes an Item
+```{r}
+outcomes<-dcast(tab7,H.ID+D.PersonID~P.Name, value.var = 'D.Quantity',fun.aggregate=sum)
+# It's very important to add fun.aggregate.fun =sum to count the quantity of sold items and not only the number of item occurence
+head(outcomes,3)
+```
+
+NOTE: D.WorkingOrder variable has 7 possible values 
+```{r}
+unique(df1$D.WorkingOrder)
+```
+
+IMPORTANT:  The function dcast applied here doesn't retain these values , it calculates the occurence frequency of each item  for each pair H.ID/PersonID
+Taking an example on  the table 'outcomes':
+```{r}
+subset(outcomes,D.PersonID ==271,select=c('H.ID','D.PersonID','MENU HAMBOURGEOIS'))
+```
+
+In df1:
+```{r}
+df1%>%filter(D.PersonID==271 & P.Name=='MENU HAMBOURGEOIS')%>%select('H.ID','D.PersonID','P.Name','P.WorkingOrder','D.WorkingOrder','P.NetPrice','D.NegociatedNetPrice','D.Quantity','P.WorkingOrder')
+```
+
+We've observed  that 8 Menu Hambourgeois' in the table 'outcomes' corresponds to the total of times  'MENU HAMBOURGEOIS' has occured on the table df1. 
+```{r}
+head(User[ order(tab4$H.ID), ],7)
+```
+
+```{r}
+head(outcomes,5)
+```
+
+Verifying if 2 tables 'Users' & 'outcomes' have the same number of rows
+It looks correct!
+```{r}
+print(dim(User))
+print(dim(outcomes))
+```
+It looks good!
+
+
+Converting numerics labels  so that they become factor variables 
+***Not do this now, we need this variable retained numeric to do somme statistics
+outcomes<- to.factors(outcomes,c(colnames(outcomes[,c(1,3:127)])))
+str(outcomes)
+
+
+Taking again the example with 'MENU HAMBOURGEOIS'
+```{r}
+table( outcomes$`MENU HAMBOURGEOIS`)
+```
+
+```{r}
+filter(outcomes,`MENU HAMBOURGEOIS`==5)
+```
+
+```{r}
+filter(df1,H.ID==8|H.ID==4175)
+```
+
+```{r}
+table(outcomes$`Verre de Bordeaux Rouge Agape`)
+#8/9880
+```
+
+
+Sales volume for each Item
+```{r}
+solditems=sapply(outcomes[,3:127],function(x)sum(x))
+```
+
+```{r}
+head(solditems,5)
+```
+
+
+
+#### 4) USING FREQUENT ITEMSET BASED ASSOCIATION RULES  ALGORITHM ( ARules package)
+
+```{r}
+#library(arules)
+fact <- data.frame(lapply(outcomes[,3:127],as.factor))# to ignore H.ID & PersonID
+head(fact,3)
+```
+
+```{r}
+dim(fact)
+```
+```{r}
+colnames(fact)
+```
+
+
+
+Writing a function that can change a value not null by the name of Item in each column
+```{r}
+to_nameItems<- function (df){
+  for ( i in c(1:length(colnames(df)))){
+    df[[i]]<-ifelse(df[i]!=0,colnames(df[i]),0)
+  }    
+  return(df)
+}
+```
+Applying this function to the matrix ' fact'
+```{r}
+test1<-as.data.frame(to_nameItems(fact))
+test1 <- data.frame(lapply(test1[,1:125],unlist))# to convert variables related to products from vector ( list) to factor variables
+```
+
+Adding 2 ID columns and creating a matrix containing label Item names
+```{r}
+itemlabels_matrix<-cbind(outcomes[,1:2],test1)#adding H.ID and PersonID to this matrix creating a new data set called 'itemlabels_matrix'
+head(itemlabels_matrix,2)
+```
+
+Writing a function that can convert a occurence value to a binary value
+
+```{r}
+to_binaryitems<- function (df){
+  for ( i in c(1:length(colnames(df)))){
+    df[[i]]<-ifelse(df[i]!=0,1,0)
+  }    
+  return(df)
+}
+```
+
+Applying this function to the matrix 'fact' and creating a matrix containing binary lablel values
+
+```{r}
+test2<-to_binaryitems(fact)
+test2 <- data.frame(lapply(test2[,1:125],unlist))# to convert variables related to products from vector ( list) to factor variable
+test2<-data.frame(lapply(test2[,1:125],as.factor))
+```
+
+```{r}
+itembinary_matrix<-cbind(outcomes[,1:2],test2)
+dim(itembinary_matrix)
+```
+
+Applyng Arules package  onto 'itemslabel_matrix'
+https://cran.r-project.org/web/packages/arules/vignettes/arules.pdf(p.23)
+
+```{r}
+trans_itemlabel <- as(itemlabels_matrix[,3:127], "transactions")
+```
+
+```{r}
+summary(trans_itemlabel)
+```
+
+
+Let's see which items are important in the data set we can use the itemFrequencyPlot().
+In order to reduce the number of items, we only plot the item frequency for items with a support greater than 10% (using the parameter support).
+
+```{r,fig.height=7,fig.width=17}
+#library(arulesViz)
+#library(RColorBrewer)
+itemFrequencyPlot(trans_itemlabel[c(seq(2,250,2))], support = 0.1, cex.names=0.8,col=brewer.pal(8,'Pastel2'),main='Item frequencies of items in the data set with support greater than 10%.')
+
+```
+
+```{r}
+trans_itemlabel[c(1,3)]
+```
+
+Next, we recall the function apriori() to find all rules (the default association type for
+apriori()) with a minimum support of 10% and a confidence of 0.6.
+```{r}
+rules <- apriori(trans_itemlabel[,126:250], parameter = list(support = 0.05, confidence = 0.,minlen=2,maxlen=4))
+summary(rules)
+```
+
+
+As typical for association rule mining, the number of rules found is huge. 
+
+To analyze these rules, for example, subset() can be used to produce separate subsets of rules for each item
+which resulted form a given product in which the manager is interested
+
+For instance, he want to know which are products to produce ' Jus fruit maison' in the right-hand-side of the rule. 
+
+The following code allows to do this requiring at the same time that the lift measure exceeds 1
+
+```{r}
+rulesSoupfruit <- subset(rules, subset = rhs %in% "SOUPEFRUIT=SOUPEFRUIT" & lift > 1)
+rulesSoupfruit
+```
+
+```{r}
+inspect(head(rulesSoupfruit, n = 10, by = "confidence"))
+```
+
+We can observe that transforming the itemlabel_matrix to transaction matrix "trans_itemlabel matrix" by function 'as"  is not a good solution.
+
+See this post:
+
+https://stackoverflow.com/questions/44618956/convert-r-data-frame-column-to-arules-transactions
+
+
+"Have a look at the examples in ? transactions. You need a list with vectors of items (item labels) and not a data.frame."
+
+or:
+
+http://mhahsler.github.io/arules/reference/transactions-class.html: said we need transform from dat frame to matrix
+
+or:
+
+https://stackoverflow.com/questions/19569391/convert-character-matrix-to-logical
+
+
+###### 4.1) Applying association rules
+
+As following the code for converting ourbinaty item data set to a logical item matrix
+```{r}
+items_matrix <- as.matrix(itembinary_matrix[,3:127])
+items_matrix<-items_matrix != "0" & items_matrix != "FALSE" # https://stackoverflow.com/questions/19569391/convert-character-matrix-to-logical
+head(items_matrix,1)
+```
+
+
+Coercing this matrix
+
+```{r}
+trans_itemlabel1 <- as(items_matrix, "transactions")
+trans_itemlabel1
+```
+
+Let us check the most frequently purchased products using the
+summary function.
+```{r}
+summary(trans_itemlabel1)
+```
+The Top 5 Items sold in transactions as GROSSEFRITE,ATATEDOUCE, MAXIFLETTE, MENU.HAMBOURGEOIS and  CAFEGOURMAND
+
+
+We're going to make an Item Frequency Histogram for TOP30 Items whose supports are greater than 1%
+```{r,fig.height=7,fig.width=17}
+#library(arules)
+#library(arulesViz)
+#library(RColorBrewer)
+itemFrequencyPlot(trans_itemlabel1, topN=30,support = 0.01, cex.names=0.8,col=brewer.pal(8,'Pastel2'),main='Item frequencies of items in the data set with support greater than 1%.')
+```
+
+See: (https://www.analyticsvidhya.com/blog/2017/08/mining-frequent-items-usingapriori-
+algorithm/?share=reddit&nb=1)
+
+Next, we call the function apriori() to find all rules (the default association type for
+apriori()) with a minimum support of 1% and a confidence of 0.6.
+
+
+```{r}
+rules1 <- apriori(trans_itemlabel1, parameter = list(support = 0.01, confidence = 0.3,minlen=2,maxlen=6))
+summary(rules1)
+```
+With min support =0.01, min lenght rule = 2 and max lenght rule =6 , we have obtained a set of 151 rules
+
+
+Sorting TopN=30 rules by 'lift' metric
+```{r}
+top.lift <- sort(rules1, decreasing = TRUE, na.last = NA, by = "lift")
+inspect(top.lift[1:30])
+```
+
+##### 4.2) Graphical Representation
+
+Moving forward in the visualisation, we can use a graph to highlight the support and lifts of various items in our repository but mostly to see which product is associated with which one in
+the sales environment.
+
+The size of graph nodes is based on support levels and the colour on lift ratios. The incoming lines show the Antecedants or the LHS and the RHS is represented by names of items.
+
+
+
+```{r,fig.height=8,fig.width=14}
+plot(top.lift[1:30],
+method = "graph",
+control = list(type = "items"))
+```
+
+
+The above graph shows us that most of our transactions were consolidated around "Grossefrite", â€œMenu HamBourgeoisâ€, " Maxiflette Menu", and "Mouflet".
+
+We also see that all Expresso and Cafe Gourmand are very strongly associated so we must place these together.
+
+
+##### 4.3) Individual Rule Representation
+
+The next plot oô€ƒ™ers us a parallel coordinate system ofvisualisation. It would help us clearly see that which produc tsalong with which ones, result in what kinds of sales.
+As mentioned above, the RHS is the Consequent or the item we propose the customer will buy; the positions are in the LHS where 2 is the most recent addition to our basket and 1 is the
+item we previously had
+
+```{r,fig.width=12}
+plot(top.lift[1:20],
+method = "paracoord",
+control = list(reorder = TRUE))
+```
+
+The topmost rule shows us that when the customer have NUGGETS and Jus de Fruit Maison in his shopping cart, He is  highly likely to buy Maxiflette Menu to go along with those as well.
+
+
+If we need to get a matrix representation, an alternate code option would be:
+```{r,fig.width=8}
+plot(top.lift[1:20],
+method = "matrix",
+control = list(reorder = TRUE))
+
+``` 
+
+##### 4.4) Interactive Scatterplot
+
+These plots show us each and every rule visualised into a form of a scatterplot. The conô€ƒšdence levels are plotted on the Y axis and Support levels on the X axis for each rule. We can hover
+over them in our interactive plot to see the rule.
+
+
+```{r,fig.width=10}
+arulesViz::plotly_arules(top.lift)
+```
+
+
+
+
+
+If we want to get a data frame describing the top20 rules by lift metric, the following code will allow us to do that
+
+
+```{r}
+top20_df=as(top.lift,"data.frame")
+top20_df
+```
+
+As typical for association rule mining, the number of rules found is huge. 
+
+To analyze these rules, for example, subset() can be used to produce separate subsets of rules for each item
+which resulted form a given product in which the manager is interested
+
+For instance, if we want to know which are products to produce ' Jus fruit maison' in the right-hand-side of the rule. 
+
+The following code allows to do this requiring at the same time that the lift measure exceeds 1
+
+```{r}
+rulesSoupfruit1<- subset(rules1, subset = rhs %in% "SOUPEFRUIT" & lift > 0.1)
+rulesSoupfruit1
+```
+
+```{r}
+inspect(rulesSoupfruit1, n = 10, by = "confidence")
+```
+
+
+END OF WORK
+
+Optional: eXPORTING DATA SETS TO csv Files
+```{r}
+#write.csv(itembinary_matrix,file="itembinaryID.csv", row.names=FALSE) # say "temp.csv" is your text file
+#write.csv(itemlabels_matrix,file="itemlabels_matrix.csv", row.names=FALSE)
+#write.csv(outcomes,file="itemquanti.csv", row.names=FALSE)
+#write.csv(User,file="User.csv", row.names=FALSE)
+#write.csv(items_matrix,file="items_matrix.csv",row.names = FALSE)
+#write.csv(It_nbdiner,file="items_nbdiner.csv",row.names = FALSE)
+#write.csv(It_netprice,file="items_netprice.csv",row.names = FALSE)
+#write.csv(IT_return_cust,file="items_return_cust.csv",row.names = FALSE)
+#write.csv(z,file="seen_data.csv",row.names = FALSE)
+```
